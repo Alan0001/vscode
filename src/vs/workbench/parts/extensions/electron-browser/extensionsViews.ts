@@ -222,27 +222,73 @@ export class ExtensionsListView extends ViewletPanel {
 			return new PagedModel(this.sortExtensions(result, options));
 		}
 
-		const categories: string[] = [];
-		value = value.replace(/\bcategory:("([^"]*)"|([^"]\S*))(\s+|\b|$)/g, (_, quotedCategory, category) => {
-			const entry = (category || quotedCategory || '').toLowerCase();
-			if (categories.indexOf(entry) === -1) {
-				categories.push(entry);
+		if (ExtensionsListView.isInstalledExtensionsQuery(value)) {
+			const categories: string[] = [];
+			value = value.replace(/\bcategory:("([^"]*)"|([^"]\S*))(\s+|\b|$)/g, (_, quotedCategory, category) => {
+				const entry = (category || quotedCategory || '').toLowerCase();
+				if (categories.indexOf(entry) === -1) {
+					categories.push(entry);
+				}
+				return '';
+			});
+
+			if (/@installed/i.test(value)) {
+				// Show installed extensions
+				value = value.replace(/@installed/g, '').replace(/@sort:(\w+)(-\w*)?/g, '').trim().toLowerCase();
+
+				let result = await this.extensionsWorkbenchService.queryLocal();
+
+				result = result
+					.filter(e => e.type === LocalExtensionType.User
+						&& (e.name.toLowerCase().indexOf(value) > -1 || e.displayName.toLowerCase().indexOf(value) > -1)
+						&& (!categories.length || categories.some(category => (e.local.manifest.categories || []).some(c => c.toLowerCase() === category))));
+
+				return new PagedModel(this.sortExtensions(result, options));
 			}
-			return '';
-		});
 
-		if (/@installed/i.test(value)) {
-			// Show installed extensions
-			value = value.replace(/@installed/g, '').replace(/@sort:(\w+)(-\w*)?/g, '').trim().toLowerCase();
+			if (/@outdated/i.test(value)) {
+				value = value.replace(/@outdated/g, '').replace(/@sort:(\w+)(-\w*)?/g, '').trim().toLowerCase();
 
-			let result = await this.extensionsWorkbenchService.queryLocal();
+				const local = await this.extensionsWorkbenchService.queryLocal();
+				const result = local
+					.sort((e1, e2) => e1.displayName.localeCompare(e2.displayName))
+					.filter(extension => extension.outdated
+						&& (extension.name.toLowerCase().indexOf(value) > -1 || extension.displayName.toLowerCase().indexOf(value) > -1)
+						&& (!categories.length || categories.some(category => extension.local.manifest.categories.some(c => c.toLowerCase() === category))));
 
-			result = result
-				.filter(e => e.type === LocalExtensionType.User
-					&& (e.name.toLowerCase().indexOf(value) > -1 || e.displayName.toLowerCase().indexOf(value) > -1)
-					&& (!categories.length || categories.some(category => (e.local.manifest.categories || []).some(c => c.toLowerCase() === category))));
+				return new PagedModel(this.sortExtensions(result, options));
+			}
 
-			return new PagedModel(this.sortExtensions(result, options));
+			if (/@disabled/i.test(value)) {
+				value = value.replace(/@disabled/g, '').replace(/@sort:(\w+)(-\w*)?/g, '').trim().toLowerCase();
+
+				const local = await this.extensionsWorkbenchService.queryLocal();
+				const runningExtensions = await this.extensionService.getExtensions();
+
+				const result = local
+					.sort((e1, e2) => e1.displayName.localeCompare(e2.displayName))
+					.filter(e => runningExtensions.every(r => !areSameExtensions(r, e))
+						&& (e.name.toLowerCase().indexOf(value) > -1 || e.displayName.toLowerCase().indexOf(value) > -1)
+						&& (!categories.length || categories.some(category => (e.local.manifest.categories || []).some(c => c.toLowerCase() === category))));
+
+				return new PagedModel(this.sortExtensions(result, options));
+			}
+
+			if (/@enabled/i.test(value)) {
+				value = value ? value.replace(/@enabled/g, '').replace(/@sort:(\w+)(-\w*)?/g, '').trim().toLowerCase() : '';
+
+				const local = await this.extensionsWorkbenchService.queryLocal();
+
+				let result = local
+					.sort((e1, e2) => e1.displayName.localeCompare(e2.displayName))
+					.filter(e => e.type === LocalExtensionType.User &&
+						(e.enablementState === EnablementState.Enabled || e.enablementState === EnablementState.WorkspaceEnabled) &&
+						(e.name.toLowerCase().indexOf(value) > -1 || e.displayName.toLowerCase().indexOf(value) > -1) &&
+						(!categories.length || categories.some(category => (e.local.manifest.categories || []).some(c => c.toLowerCase() === category)))
+					);
+
+				return new PagedModel(this.sortExtensions(result, options));
+			}
 		}
 
 		const idRegex = /@id:(([a-z0-9A-Z][a-z0-9\-A-Z]*)\.([a-z0-9A-Z][a-z0-9\-A-Z]*))/g;
@@ -256,50 +302,6 @@ export class ExtensionsListView extends ViewletPanel {
 		if (names.length) {
 			return this.extensionsWorkbenchService.queryGallery({ names, source: 'queryById' })
 				.then(pager => new PagedModel(pager));
-		}
-
-		if (/@outdated/i.test(value)) {
-			value = value.replace(/@outdated/g, '').replace(/@sort:(\w+)(-\w*)?/g, '').trim().toLowerCase();
-
-			const local = await this.extensionsWorkbenchService.queryLocal();
-			const result = local
-				.sort((e1, e2) => e1.displayName.localeCompare(e2.displayName))
-				.filter(extension => extension.outdated
-					&& (extension.name.toLowerCase().indexOf(value) > -1 || extension.displayName.toLowerCase().indexOf(value) > -1)
-					&& (!categories.length || categories.some(category => extension.local.manifest.categories.some(c => c.toLowerCase() === category))));
-
-			return new PagedModel(this.sortExtensions(result, options));
-		}
-
-		if (/@disabled/i.test(value)) {
-			value = value.replace(/@disabled/g, '').replace(/@sort:(\w+)(-\w*)?/g, '').trim().toLowerCase();
-
-			const local = await this.extensionsWorkbenchService.queryLocal();
-			const runningExtensions = await this.extensionService.getExtensions();
-
-			const result = local
-				.sort((e1, e2) => e1.displayName.localeCompare(e2.displayName))
-				.filter(e => runningExtensions.every(r => !areSameExtensions(r, e))
-					&& (e.name.toLowerCase().indexOf(value) > -1 || e.displayName.toLowerCase().indexOf(value) > -1)
-					&& (!categories.length || categories.some(category => (e.local.manifest.categories || []).some(c => c.toLowerCase() === category))));
-
-			return new PagedModel(this.sortExtensions(result, options));
-		}
-
-		if (/@enabled/i.test(value)) {
-			value = value ? value.replace(/@enabled/g, '').replace(/@sort:(\w+)(-\w*)?/g, '').trim().toLowerCase() : '';
-
-			const local = await this.extensionsWorkbenchService.queryLocal();
-
-			let result = local
-				.sort((e1, e2) => e1.displayName.localeCompare(e2.displayName))
-				.filter(e => e.type === LocalExtensionType.User &&
-					(e.enablementState === EnablementState.Enabled || e.enablementState === EnablementState.WorkspaceEnabled) &&
-					(e.name.toLowerCase().indexOf(value) > -1 || e.displayName.toLowerCase().indexOf(value) > -1) &&
-					(!categories.length || categories.some(category => (e.local.manifest.categories || []).some(c => c.toLowerCase() === category)))
-				);
-
-			return new PagedModel(this.sortExtensions(result, options));
 		}
 
 		if (ExtensionsListView.isWorkspaceRecommendedExtensionsQuery(query.value)) {
